@@ -1,6 +1,8 @@
 const express = require("express");
 const app = express();
 const ytdl = require("@distube/ytdl-core");
+const cors = require("cors");
+app.use(cors());
 
 app.get("/song/:id", async (req, res) => {
   try {
