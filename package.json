@@ -11,6 +11,7 @@
   "description": "",
   "dependencies": {
     "@distube/ytdl-core": "^4.16.10",
+    "axios": "^1.9.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "ytdl-core": "^4.11.5"
