@@ -23,3 +23,5 @@ app.get("/song/:id", async (req, res) => {
       res.status(500).send(`internal server error "${err.message}"`);
   }
 });
+
+app.listen(3000, () => console.log("listening on port 3000"));
