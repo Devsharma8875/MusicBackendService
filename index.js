@@ -1,51 +1,149 @@
 const express = require("express");
 const ytdl = require("@distube/ytdl-core");
 const cors = require("cors");
-
+const rateLimit = require("express-rate-limit");
+const helmet = require("helmet");
+const cache = require("memory-cache");
 require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Security middleware
+app.use(helmet());
+app.use(
+  cors({
+    origin: process.env.ALLOWED_ORIGINS?.split(",") || "*",
+  })
+);
 
-app.get("/song/:id", async (req, res) => {
+// Rate limiting (100 requests per 15 minutes per IP)
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(limiter);
+
+// Cache middleware (5 minute TTL)
+const cacheMiddleware = (duration) => {
+  return (req, res, next) => {
+    const key = "__express__" + req.originalUrl;
+    const cachedBody = cache.get(key);
+
+    if (cachedBody) {
+      res.send(cachedBody);
+      return;
+    } else {
+      res.sendResponse = res.send;
+      res.send = (body) => {
+        cache.put(key, body, duration * 1000);
+        res.sendResponse(body);
+      };
+      next();
+    }
+  };
+};
+
+// Validate YouTube ID middleware
+const validateYouTubeId = (req, res, next) => {
   const videoId = req.params.id;
-
-  // Simple validation (YouTube video IDs are 11 characters)
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-    return res.status(400).json({ error: "Invalid YouTube Video ID" });
+    return res.status(400).json({
+      error: "Invalid YouTube Video ID",
+      message: "ID must be exactly 11 alphanumeric characters",
+    });
   }
+  next();
+};
 
-  try {
-    const info = await ytdl.getInfo(videoId);
+// Audio streaming endpoint
+app.get(
+  "/song/:id",
+  validateYouTubeId,
+  cacheMiddleware(300),
+  async (req, res) => {
+    const videoId = req.params.id;
 
-    const audioFormatHigh = ytdl.chooseFormat(info.formats, {
-      quality: "highestaudio",
-      filter: "audioonly",
-    });
+    try {
+      const info = await ytdl.getInfo(videoId, {
+        lang: "en",
+        requestOptions: {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+          },
+        },
+      });
 
-    const audioFormatLow = ytdl.chooseFormat(info.formats, {
-      quality: "lowestaudio",
-      filter: "audioonly",
-    });
+      // Get audio formats
+      const audioFormats = ytdl.filterFormats(info.formats, "audioonly");
+      if (audioFormats.length === 0) {
+        return res.status(404).json({ error: "No audio formats available" });
+      }
 
-    res.status(200).json({
-      id: videoId,
-      title: info.videoDetails.title,
-      duration: info.videoDetails.lengthSeconds,
-      audioHigh: audioFormatHigh.url,
-      audioLow: audioFormatLow.url,
-      thumbnail: info.videoDetails.thumbnails.pop()?.url || null,
-    });
-  } catch (err) {
-    console.error("Failed to fetch audio:", err.message);
-    res
-      .status(500)
-      .json({ error: "Failed to fetch audio", details: err.message });
+      // Select formats
+      const formatHigh = ytdl.chooseFormat(audioFormats, {
+        quality: "highestaudio",
+      });
+      const formatLow = ytdl.chooseFormat(audioFormats, {
+        quality: "lowestaudio",
+      });
+
+      // Safely handle thumbnails
+      const thumbnails = info.videoDetails.thumbnails || [];
+      const maxresThumbnail = thumbnails.find((t) => t.width >= 1280);
+      const defaultThumbnail = thumbnails[thumbnails.length - 1];
+
+      // Response data
+      const response = {
+        id: videoId,
+        title: info.videoDetails.title,
+        duration: parseInt(info.videoDetails.lengthSeconds),
+        formats: {
+          high: formatHigh.url,
+          low: formatLow.url,
+        },
+        thumbnail: {
+          default: defaultThumbnail?.url,
+          high: thumbnails.find((t) => t.height >= 360)?.url,
+          maxres: maxresThumbnail?.url,
+        },
+        meta: {
+          channel: info.videoDetails.author?.name || "Unknown",
+          viewCount: info.videoDetails.viewCount || 0,
+          isLive: info.videoDetails.isLiveContent || false,
+        },
+      };
+
+      res.json(response);
+    } catch (err) {
+      console.error(`Error processing ${videoId}:`, err.message);
+
+      const statusCode = err.message.includes("Video unavailable") ? 404 : 500;
+      res.status(statusCode).json({
+        error: "Failed to process request",
+        message: err.message,
+        videoId,
+      });
+    }
   }
+);
+
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "healthy" });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error("Server error:", err.stack);
+  res.status(500).json({ error: "Internal server error" });
 });
 
 app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
 });
