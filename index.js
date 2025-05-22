@@ -1,6 +1,6 @@
 const express = require("express");
 const app = express();
-const ytdl = require("ytdl-core");
+const ytdl = require("@distube/ytdl-core");
 
 app.get("/song/:id", async (req, res) => {
   try {
