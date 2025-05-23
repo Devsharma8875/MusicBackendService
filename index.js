@@ -131,6 +131,57 @@ app.get(
     }
   }
 );
+app.get(
+  "/related/:id",
+  validateYouTubeId,
+  cacheMiddleware(300),
+  async (req, res) => {
+    const videoId = req.params.id;
+
+    try {
+      const info = await ytdl.getInfo(videoId);
+      const related = info.related_videos?.slice(0, 15).map((video) => ({
+        id: video.id,
+        title: video.title,
+        author: video.author?.name,
+        thumbnail: video.thumbnails?.[0]?.url,
+        duration: video.length_seconds,
+      }));
+
+      res.json({ videoId, related });
+    } catch (err) {
+      console.error(
+        `Failed to fetch related videos for ${videoId}:`,
+        err.message
+      );
+      res.status(500).json({
+        error: "Failed to fetch related videos",
+        message: err.message,
+      });
+    }
+  }
+);
+app.get("/download/:id", validateYouTubeId, async (req, res) => {
+  const videoId = req.params.id;
+
+  try {
+    const info = await ytdl.getInfo(videoId);
+    const title = info.videoDetails.title.replace(/[^\w\s-]/gi, "");
+
+    const format = ytdl.chooseFormat(info.formats, { quality: "highestaudio" });
+
+    res.setHeader("Content-Disposition", `attachment; filename="${title}.mp3"`);
+    res.setHeader("Content-Type", "audio/mpeg");
+
+    ytdl(videoId, { format: format }).pipe(res);
+  } catch (err) {
+    console.error(`Error in /download/${videoId}:`, err.message);
+    res.status(500).json({
+      error: "Failed to process download request",
+      message: err.message,
+    });
+  }
+});
 
 // Health check endpoint
 app.get("/health", (req, res) => {
