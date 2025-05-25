@@ -13,16 +13,16 @@ const PORT = process.env.PORT || 3000;
 // Configuration
 const config = {
   userAgents: [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
   ],
   maxRetries: 3,
-  retryDelay: 1000,
-  cookieRefreshThreshold: 5, // Number of auth failures before refreshing cookies
+  retryDelay: 2000,
+  cookieRefreshThreshold: 3,
 };
 
-// State for tracking auth failures
+// State management
 let authFailures = 0;
 let lastCookieRefresh = Date.now();
 
@@ -38,16 +38,14 @@ app.use(
 // Rate limiting
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: "Too many requests from this IP, please try again later",
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const downloadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
-  message: "Too many download requests from this IP",
+  max: 15,
 });
 
 // Enhanced cache middleware
@@ -75,10 +73,10 @@ const cacheMiddleware = (duration) => {
 // Validate YouTube ID middleware
 const validateYouTubeId = (req, res, next) => {
   const videoId = req.params.id;
-  if (!ytdl.validateID(videoId) && !ytdl.validateURL(videoId)) {
+  if (!ytdl.validateID(videoId)) {
     return res.status(400).json({
       error: "Invalid YouTube Video ID",
-      message: "Please provide a valid 11-character YouTube video ID",
+      message: "ID must be exactly 11 alphanumeric characters",
     });
   }
   next();
@@ -99,21 +97,26 @@ const fetchWithRetry = async (fn, retries = config.maxRetries) => {
 };
 
 // Cookie management
-const refreshCookies = async () => {
-  console.log("Attempting to refresh YouTube cookies...");
-  // In a real implementation, you would:
-  // 1. Use a headless browser to log in to YouTube
-  // 2. Extract fresh cookies
-  // 3. Update process.env.YOUTUBE_COOKIES
-  // For now, we'll just log and reset the counter
-  authFailures = 0;
-  lastCookieRefresh = Date.now();
-  console.log(
-    "Cookie refresh simulated. In production, implement actual refresh mechanism."
-  );
+const parseCookies = () => {
+  if (!process.env.YOUTUBE_COOKIES) return [];
+
+  return process.env.YOUTUBE_COOKIES.split(";").map((cookie) => {
+    const [name, ...rest] = cookie.trim().split("=");
+    return {
+      name: name.trim(),
+      value: rest.join("=").trim(),
+      domain: ".youtube.com",
+      path: "/",
+      expires: Math.floor((Date.now() + 86400 * 1000) / 1000), // 1 day from now
+      httpOnly: true,
+      secure: true,
+    };
+  });
 };
 
 const getYouTubeInfo = async (videoId) => {
+  const cookies = parseCookies();
+
   const options = {
     lang: "en",
     requestOptions: {
@@ -122,14 +125,19 @@ const getYouTubeInfo = async (videoId) => {
         "Accept-Language": "en-US,en;q=0.9",
         Accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        Cookie: process.env.YOUTUBE_COOKIES,
         "X-Origin": "https://www.youtube.com",
         Referer: "https://www.youtube.com/",
         Origin: "https://www.youtube.com",
       },
-      timeout: 10000,
+      timeout: 15000,
     },
   };
+
+  if (cookies.length > 0) {
+    options.requestOptions.headers.Cookie = cookies
+      .map((c) => `${c.name}=${c.value}`)
+      .join("; ");
+  }
 
   if (process.env.HTTP_PROXY) {
     options.requestOptions.agent = new HttpsProxyAgent(process.env.HTTP_PROXY);
@@ -232,104 +240,26 @@ app.get(
         err.message.includes("Sign in")
       ) {
         authFailures++;
-        if (
-          authFailures >= config.cookieRefreshThreshold &&
-          Date.now() - lastCookieRefresh > 3600000
-        ) {
-          // 1 hour since last refresh
-          await refreshCookies();
-        }
         statusCode = 403;
         errorMessage =
           "YouTube blocked the request. Cookies may need refreshing.";
+
+        if (authFailures >= config.cookieRefreshThreshold) {
+          console.warn(
+            "Multiple auth failures detected. Please refresh YouTube cookies."
+          );
+        }
       }
 
       res.status(statusCode).json({
         error: errorMessage,
         message: err.message,
         videoId,
-      });
-    }
-  }
-);
-
-// Related videos endpoint
-app.get(
-  "/related/:id",
-  validateYouTubeId,
-  apiLimiter,
-  cacheMiddleware(300),
-  async (req, res) => {
-    const videoId = req.params.id;
-
-    try {
-      const info = await fetchWithRetry(() => getYouTubeInfo(videoId));
-      const related =
-        info.related_videos
-          ?.filter((video) => video.id && video.title)
-          ?.slice(0, 15)
-          ?.map((video) => ({
-            id: video.id,
-            title: video.title,
-            author: video.author?.name,
-            thumbnail: video.thumbnails?.[0]?.url,
-            duration: video.length_seconds,
-          })) || [];
-
-      res.json({ videoId, related });
-    } catch (err) {
-      console.error(`Failed to fetch related videos for ${videoId}:`, err);
-      res.status(500).json({
-        error: "Failed to fetch related videos",
-        message: err.message,
-        videoId,
-      });
-    }
-  }
-);
-
-// Download endpoint
-app.get(
-  "/download/:id",
-  validateYouTubeId,
-  downloadLimiter,
-  async (req, res) => {
-    const videoId = req.params.id;
-
-    try {
-      const info = await fetchWithRetry(() => getYouTubeInfo(videoId));
-      const title = info.videoDetails.title.replace(/[^\w\s-]/g, "");
-
-      const format = ytdl.chooseFormat(info.formats, {
-        quality: "highestaudio",
-        filter: "audioonly",
-      });
-
-      if (!format.url) {
-        throw new Error("No downloadable audio format available");
-      }
-
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${title}.mp3"`
-      );
-      res.setHeader("Content-Type", "audio/mpeg");
-
-      ytdl(videoId, {
-        format: format,
-        requestOptions: {
-          headers: {
-            "User-Agent": getRandomUserAgent(),
-            Cookie: process.env.YOUTUBE_COOKIES,
-          },
-        },
-      }).pipe(res);
-    } catch (err) {
-      console.error(`Error in /download/${videoId}:`, err);
-      res.status(500).json({
-        error: "Failed to process download request",
-        message: err.message,
-        videoId,
+        authFailures,
+        suggestion:
+          statusCode === 403
+            ? "Refresh your YouTube cookies in the .env file"
+            : undefined,
       });
     }
   }
@@ -346,20 +276,9 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error("Server error:", err.stack);
-  res.status(500).json({
-    error: "Internal server error",
-    message: err.message,
-  });
-});
-
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
-  console.log(
-    "Initial cookies loaded:",
-    process.env.YOUTUBE_COOKIES ? "Yes" : "No"
-  );
+  console.log("Cookies loaded:", process.env.YOUTUBE_COOKIES ? "Yes" : "No");
+  console.log("User agents available:", config.userAgents.length);
 });
