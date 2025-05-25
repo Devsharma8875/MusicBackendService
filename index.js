@@ -181,14 +181,8 @@ app.get(
         title: info.videoDetails.title,
         duration: parseInt(info.videoDetails.lengthSeconds),
         formats: {
-          high: {
-            url: formatHigh.url,
-            mimeType: formatHigh.mimeType,
-          },
-          low: {
-            url: formatLow.url,
-            mimeType: formatLow.mimeType,
-          },
+          high: formatHigh.url,
+          low: formatLow.url,
         },
         thumbnail: {
           default: defaultThumbnail?.url,
