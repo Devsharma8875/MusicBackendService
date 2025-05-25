@@ -59,6 +59,78 @@ const validateYouTubeId = (req, res, next) => {
 };
 
 // Audio streaming endpoint
+// app.get(
+//   "/song/:id",
+//   validateYouTubeId,
+//   cacheMiddleware(300),
+//   async (req, res) => {
+//     const videoId = req.params.id;
+
+//     try {
+//       const info = await ytdl.getInfo(videoId, {
+//         lang: "en",
+//         requestOptions: {
+//           headers: {
+//             "User-Agent":
+//               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+//             "Accept-Language": "en-US,en;q=0.9",
+//           },
+//         },
+//       });
+
+//       // Get audio formats
+//       const audioFormats = ytdl.filterFormats(info.formats, "audioonly");
+//       if (audioFormats.length === 0) {
+//         return res.status(404).json({ error: "No audio formats available" });
+//       }
+
+//       // Select formats
+//       const formatHigh = ytdl.chooseFormat(audioFormats, {
+//         quality: "highestaudio",
+//       });
+//       const formatLow = ytdl.chooseFormat(audioFormats, {
+//         quality: "lowestaudio",
+//       });
+
+//       // Safely handle thumbnails
+//       const thumbnails = info.videoDetails.thumbnails || [];
+//       const maxresThumbnail = thumbnails.find((t) => t.width >= 1280);
+//       const defaultThumbnail = thumbnails[thumbnails.length - 1];
+
+//       // Response data
+//       const response = {
+//         id: videoId,
+//         title: info.videoDetails.title,
+//         duration: parseInt(info.videoDetails.lengthSeconds),
+//         formats: {
+//           high: formatHigh.url,
+//           low: formatLow.url,
+//         },
+//         thumbnail: {
+//           default: defaultThumbnail?.url,
+//           high: thumbnails.find((t) => t.height >= 360)?.url,
+//           maxres: maxresThumbnail?.url,
+//         },
+//         meta: {
+//           channel: info.videoDetails.author?.name || "Unknown",
+//           viewCount: info.videoDetails.viewCount || 0,
+//           isLive: info.videoDetails.isLiveContent || false,
+//         },
+//       };
+
+//       res.json(response);
+//     } catch (err) {
+//       console.error(`Error processing ${videoId}:`, err.message);
+
+//       const statusCode = err.message.includes("Video unavailable") ? 404 : 500;
+//       res.status(statusCode).json({
+//         error: "Failed to process request",
+//         message: err.message,
+//         videoId,
+//       });
+//     }
+//   }
+// );
 app.get(
   "/song/:id",
   validateYouTubeId,
@@ -78,13 +150,19 @@ app.get(
         },
       });
 
-      // Get audio formats
-      const audioFormats = ytdl.filterFormats(info.formats, "audioonly");
+      // Get only supported audio formats
+      const audioFormats = ytdl
+        .filterFormats(info.formats, "audioonly")
+        .filter((f) =>
+          ["audio/mp4", "audio/webm"].some((type) => f.mimeType?.includes(type))
+        );
+
       if (audioFormats.length === 0) {
-        return res.status(404).json({ error: "No audio formats available" });
+        return res
+          .status(404)
+          .json({ error: "No supported audio formats available" });
       }
 
-      // Select formats
       const formatHigh = ytdl.chooseFormat(audioFormats, {
         quality: "highestaudio",
       });
@@ -97,14 +175,20 @@ app.get(
       const maxresThumbnail = thumbnails.find((t) => t.width >= 1280);
       const defaultThumbnail = thumbnails[thumbnails.length - 1];
 
-      // Response data
+      // Response
       const response = {
         id: videoId,
         title: info.videoDetails.title,
         duration: parseInt(info.videoDetails.lengthSeconds),
         formats: {
-          high: formatHigh.url,
-          low: formatLow.url,
+          high: {
+            url: formatHigh.url,
+            mimeType: formatHigh.mimeType,
+          },
+          low: {
+            url: formatLow.url,
+            mimeType: formatLow.mimeType,
+          },
         },
         thumbnail: {
           default: defaultThumbnail?.url,
@@ -121,7 +205,6 @@ app.get(
       res.json(response);
     } catch (err) {
       console.error(`Error processing ${videoId}:`, err.message);
-
       const statusCode = err.message.includes("Video unavailable") ? 404 : 500;
       res.status(statusCode).json({
         error: "Failed to process request",
