@@ -82,6 +82,6 @@ function encodeRFC5987ValueChars(str) {
     .replace(/%(?:7C|60|5E)/g, unescape);
 }
 
-app.listen(PORT, () => {
-  console.log("server is running on port 5000");
+app.listen(process.env.PORT || 5000, () => {
+  console.log("server is running on port", process.env.PORT || 5000);
 });
