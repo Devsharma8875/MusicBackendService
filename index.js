@@ -1,6 +1,12 @@
 const express = require("express");
 const app = express();
 const ytdl = require("@distube/ytdl-core");
+app.use(
+  cors({
+    origin: process.env.ALLOWED_ORIGINS?.split(",") || "*",
+  })
+);
+
 
 app.get("/song/:id", async (req, res) => {
   try {
