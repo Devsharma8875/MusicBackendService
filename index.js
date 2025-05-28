@@ -1,13 +1,27 @@
 const express = require("express");
-const app = express();
-const ytdl = require("@distube/ytdl-core");
 const cors = require("cors");
-app.use(
-  cors({
-    origin: process.env.ALLOWED_ORIGINS?.split(",") || "*",
-  })
-);
+const ytdl = require("@distube/ytdl-core");
+const app = express();
 
+app.use(cors());
+
+// Helper function to format video details
+const formatVideoDetails = (videoDetails) => ({
+  id: videoDetails.videoId,
+  title: videoDetails.title,
+  author: videoDetails.author.name,
+  duration: parseInt(videoDetails.lengthSeconds),
+  thumbnail: videoDetails.thumbnails[videoDetails.thumbnails.length - 1].url,
+  viewCount: videoDetails.viewCount,
+  uploadDate: videoDetails.uploadDate,
+  keywords: videoDetails.keywords || [],
+});
+
+app.get("/", (req, res) => {
+  res.send("🎵 YouTube Audio Stream & Download API");
+});
+
+// Audio stream endpoint
 app.get("/song/:id", async (req, res) => {
   try {
     const info = await ytdl.getInfo(req.params.id);
@@ -28,6 +42,18 @@ app.get("/song/:id", async (req, res) => {
     res.status(500).send(`Internal Server Error: "${err.message}"`);
   }
 });
+
+// Song information endpoint
+app.get("/stream/:id", async (req, res) => {
+  try {
+    const info = await ytdl.getInfo(req.params.id);
+    res.status(200).json(formatVideoDetails(info.videoDetails));
+  } catch (err) {
+    res.status(500).send(`Internal Server Error: "${err.message}"`);
+  }
+});
+
+// Enhanced related songs endpoint
 app.get("/related/:id", async (req, res) => {
   try {
     const info = await ytdl.getInfo(req.params.id);
@@ -49,6 +75,8 @@ app.get("/related/:id", async (req, res) => {
       res.status(500).send(`Internal Server Error: "${err.message}"`);
   }
 });
+
+// New download endpoint
 app.get("/download/:id", async (req, res) => {
   try {
     const videoId = req.params.id;
@@ -82,6 +110,6 @@ function encodeRFC5987ValueChars(str) {
     .replace(/%(?:7C|60|5E)/g, unescape);
 }
 
-app.listen(process.env.PORT || 5000, () => {
-  console.log("server is running on port", process.env.PORT || 5000);
+app.listen(3000, () => {
+  console.log("🎵 Server running at http://localhost:3000");
 });
