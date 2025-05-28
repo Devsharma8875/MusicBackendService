@@ -1,9 +1,22 @@
 const express = require("express");
 const cors = require("cors");
 const ytdl = require("@distube/ytdl-core");
+require('dotenv').config(); // Load environment variables
+
 const app = express();
 
-app.use(cors());
+// Configure CORS with allowed origins
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (allowedOrigins.includes(origin) || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+};
+app.use(cors(corsOptions));
 
 // Helper function to format video details
 const formatVideoDetails = (videoDetails) => ({
@@ -110,6 +123,7 @@ function encodeRFC5987ValueChars(str) {
     .replace(/%(?:7C|60|5E)/g, unescape);
 }
 
-app.listen(3000, () => {
-  console.log("🎵 Server running at http://localhost:3000");
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🎵 Server running in ${process.env.NODE_ENV || 'development'} mode at http://localhost:${PORT}`);
 });
